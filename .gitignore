@@ -2,8 +2,12 @@
 .Rhistory
 .RData
 .Ruserdata
-.xlsx
-.pdf
+*.xlsx
+*.rmd
+*.html
+*.pdf
 Slides_fresh/
 Literatur/
-code/
+code/data
+code/resources
+code/wordclouds
