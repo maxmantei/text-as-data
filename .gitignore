@@ -2,7 +2,8 @@
 .Rhistory
 .RData
 .Ruserdata
-Literature/
 .xlsx
+.pdf
 Slides_fresh/
-code/
+Literature/
+code/wordclouds
