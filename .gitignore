@@ -7,6 +7,7 @@
 *.html
 *.pdf
 !code/data/documents/bundestag/*.pdf
+!code/data/documents/news/*.html
 Slides_fresh/
 Literatur/
 code/resources
