@@ -6,6 +6,7 @@
 *.rmd
 *.html
 *.pdf
+!code/data/documents/bundestag/*.pdf
 Slides_fresh/
 Literatur/
 code/resources
