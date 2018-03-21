@@ -1,41 +1,44 @@
 # Ulrich Fritsche
 # based on code by Gregor Wiedemann and Andreas Niekler, GESIS, 2017
 # Jan 16, 2018
-
+#
+# slightly changed by Maximillain Mantei @ 2018/03/21
+#
 # --------------------------------------
-# Housekeeping & Path
+# Housekeeping & Path (easier with R project)
 # --------------------------------------
 
-rm(list=ls())
-# check working directory. It should be the destination folder of the extracted 
-# zip file. If necessary, use `setwd("your-tutorial-folder-path")` to change it.
-setwd("C:/Users/FritscheU/Dropbox/RCourse_Text_Mining/Code")
-getwd() # check that the folder is correct
-
-# important option for text analysis
+# set options
 options(stringsAsFactors = F)
 
+# load packages
+library(tidyverse)
 library(tm)
+library(openNLP)
+library(Matrix)
+library(igraph)
+# Read in the source code for the co-occurrence calculation
+source("code/calculateCoocStatistics.R")
 
-textdata <- read.csv("data/sotu.csv", sep = ";", encoding = "UTF-8")
-english_stopwords <- readLines("resources/stopwords_en.txt", encoding = "UTF-8")
+# get data
+textdata <- read_csv2("code/data/sotu.csv")
+english_stopwords <- readLines("code/resources/stopwords_en.txt", encoding = "UTF-8")
 
-# Due to some changes in tm package, we have to bring the data into a specific order. First column = "doc_id", second column = "text", other columns are metadata
-
-names(textdata)[names(textdata) == "id"] <- "doc_id"
-textdata <- textdata[c(1,5,2,3,4)]
+# We rename "id" into "doc_id"
+textdata <- textdata %>%
+  rename("doc_id" = "id") %>% # rename
+  select(c(1,5,2,3,4)) # reorder cols
 
 # Create corpus object
-
-corpus <- Corpus(DataframeSource(textdata))
+corpus <- textdata %>% 
+  as.data.frame() %>%
+  DataframeSource() %>%
+  Corpus()
 
 # Function 1: Sentence as a base for analysis
-
-require(openNLP)
-
+#-------------------------------------------------------------------------------
 # Function to convert a document in a vector of sentences
-
-convert_text_to_sentences <- function(text, lang = "en", SentModel = "resources/en-sent.bin") {
+convert_text_to_sentences <- function(text, lang = "en", SentModel = "code/resources/en-sent.bin") {
   
   # Calculate sentenve boundaries as annotation with Apache OpenNLP Maxent-sentence-detector. This is external to R. 
   sentence_token_annotator <- Maxent_Sent_Token_Annotator(language = lang, model = SentModel)
@@ -53,6 +56,8 @@ convert_text_to_sentences <- function(text, lang = "en", SentModel = "resources/
   return(sentences)
 }
 
+# Function (2) to convert a corpus of documents into a corpus of single sentences from documents
+#-------------------------------------------------------------------------------
 # Function (2) to convert a corpus of documents into a corpus of single sentences from documents
 reshape_corpus <- function(currentCorpus, ...) {
   
@@ -77,16 +82,14 @@ reshape_corpus <- function(currentCorpus, ...) {
   return(newCorpus)
 }
 
+#-------------------------------------------------------------------------------
 # Look into your memory space: both functions have to be there (at the very end) as object type "function"
-
 # just look that everything is ok
-
 length(corpus)
 substr(as.character(corpus[[1]]), 0, 200)
 
 # apply functions
 # reshape corpus into sentences
-
 sentenceCorpus <- reshape_corpus(corpus)
 
 # reshaped corpus length and its first 'document'
@@ -94,35 +97,49 @@ length(sentenceCorpus)
 as.character(sentenceCorpus[[1]])
 
 # Preprocessing chain
-sentenceCorpus <- tm_map(sentenceCorpus, removePunctuation, preserve_intra_word_dashes = TRUE)
-sentenceCorpus <- tm_map(sentenceCorpus, removeNumbers)
-sentenceCorpus <- tm_map(sentenceCorpus, content_transformer(tolower))
-sentenceCorpus <- tm_map(sentenceCorpus, removeWords, english_stopwords) # here we use the external list
-sentenceCorpus <- tm_map(sentenceCorpus, stripWhitespace) # eliminate white spaces
+sentenceCorpus <- sentenceCorpus %>% 
+  tm_map(removePunctuation, preserve_intra_word_dashes = TRUE) %>%
+  tm_map(removeNumbers) %>%
+  tm_map(content_transformer(tolower)) %>%
+  tm_map(removeWords, english_stopwords) %>% # here we use the external list
+  tm_map(stripWhitespace) # eliminate white spaces
 
-# 
-# Additionally, we are interested in the joint occurrence of words in a sentence. For this, we do not need the exact count of how often the terms occur, but only the information whether they occur together or not. This can be encoded in a binary document-term-matrix. The parameter weighting in the control options calls the weightBin function. This writes a 1 into the DTM if the term is contained in a sentence and 0 if not.
-
+# Additionally, we are interested in the joint occurrence of words in a sentence. 
+# For this, we do not need the exact count of how often the terms occur, but only the information whether they occur together or not. 
+# This can be encoded in a binary document-term-matrix. The parameter weighting in the control options calls the weightBin function. 
+# This writes a 1 into the DTM if the term is contained in a sentence and 0 if not.
 minimumFrequency <- 10
-binDTM <- DocumentTermMatrix(sentenceCorpus, control=list(bounds = list(global=c(minimumFrequency, Inf)), weighting = weightBin))
+binDTM <- DocumentTermMatrix(sentenceCorpus, 
+                             control=list(bounds = list(global=c(minimumFrequency, Inf)), 
+                                          weighting = weightBin))
 
-# Convert to sparseMatrix matrix
+# COnvert to sparseMatrix matrix
 # What does sparse mean here?
-
-require(Matrix)
-binDTM <- sparseMatrix(i = binDTM$i, j = binDTM$j, x = binDTM$v, dims = c(binDTM$nrow, binDTM$ncol), dimnames = dimnames(binDTM))
+binDTM <- sparseMatrix(i = binDTM$i, 
+                       j = binDTM$j, 
+                       x = binDTM$v, 
+                       dims = c(binDTM$nrow, binDTM$ncol), 
+                       dimnames = dimnames(binDTM))
 
 # Matrix multiplication for cooccurrence counts
 coocCounts <- t(binDTM) %*% binDTM # adjacency matrix
 
-# Let’s look at a snippet of the result. The matrix has nTerms rows and columns and is symmetric. Each cell contains the number of joint occurrences. In the diagonal, the frequencies of single occurrences of each term are encoded.
-
+# Let’s look at a snippet of the result. The matrix has nTerms rows and columns and is symmetric. 
+# Each cell contains the number of joint occurrences. 
+# In the diagonal, the frequencies of single occurrences of each term are encoded.
 as.matrix(coocCounts[202:205, 202:205])
 
-# In order to not only count joint occurrence we have to determine their significance. Different significance-measures can be used. We need also various counts to calculate the significance of the joint occurrence of a term i (coocTerm) with any other term j: * k - Number of all context units in the corpus * ki - Number of occurrences of coocTerm * kj - Number of occurrences of comparison term j * kij - Number of joint occurrences of coocTerm and j
+#-------------------------------------------------------------------------------
+# Calculate Signif. Measures
+############################
+# In order to not only count joint occurrence we have to determine their significance. 
+# Different significance-measures can be used. 
+# We need also various counts to calculate the significance of the joint occurrence of a
+#
+# term i (coocTerm) with any other term j: * k - Number of all context units in the corpus * ki - Number of occurrences of coocTerm * kj - Number of occurrences of comparison term j * kij - Number of joint occurrences of coocTerm and j
+#
 # These quantities can be calculated for any term coocTerm as follows:
-
-coocTerm <- "spain"
+coocTerm <- "wall"
 k <- nrow(binDTM)
 ki <- sum(binDTM[, coocTerm])
 kj <- colSums(binDTM)
@@ -154,22 +171,16 @@ resultOverView <- data.frame(
 colnames(resultOverView) <- c("Freq-terms", "Freq", "MI-terms", "MI", "Dice-Terms", "Dice", "LL-Terms", "LL")
 print(resultOverView)
 
-
-# Read in the source code for the co-occurrence calculation
-source("calculateCoocStatistics.R")
 # Definition of a parameter for the representation of the co-occurrences of a concept
-numberOfCoocs <- 15
+numberOfCoocs <- 10
 # Determination of the term of which co-competitors are to be measured.
-coocTerm <- "freedom"
-#coocTerm <- "california"
-#coocTerm <- "trust"
+coocTerm <- "jobs"
 coocs <- calculateCoocStatistics(coocTerm, binDTM, measure="LOGLIK")
 
 # Display the numberOfCoocs main terms
 print(coocs[1:numberOfCoocs])
 
 # Produce iGraph graphs
-
 resultGraph <- data.frame(from = character(), to = character(), sig = numeric(0))
 
 # The structure of the temporary graph object is equal to that of the resultGraph
@@ -213,8 +224,6 @@ for (i in 1:numberOfCoocs){
 # Sample of some examples from resultGraph
 resultGraph[sample(nrow(resultGraph), 6), ]
 
-require(igraph)
-
 # Set the graph and type. In this case, "F" means "Force Directed"
 graphNetwork <- graph.data.frame(resultGraph, directed = F)
 
@@ -231,7 +240,7 @@ halfMaxSig <- max(E(graphNetwork)$sig) * 0.5
 E(graphNetwork)$color <- ifelse(E(graphNetwork)$sig > halfMaxSig, "coral", "azure3")
 
 # Disable edges with radius
-E(graphNetwork)$curved <- 0 
+E(graphNetwork)$curved <- 0
 # Size the nodes by their degree of networking
 V(graphNetwork)$size <- log(degree(graphNetwork)) * 5
 
