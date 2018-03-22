@@ -1,58 +1,52 @@
 # Ulrich Fritsche
 # based on code by Gregor Wiedemann and Andreas Niekler
 # Jan 16, 2018
-# --------------------------------------
-# Housekeeping & Path
-# --------------------------------------
 #
-# Be aware that all necessary packages are installed!
+# slightly changed by Maximillain Mantei @ 2018/03/22
+#
+# --------------------------------------
+# Housekeeping & Path (easier with R project)
+# --------------------------------------
 
-rm(list=ls()) # cleaning memory
-
-# check working directory. It should be the destination folder of the extracted 
-# zip file. If necessary, use `setwd("your-tutorial-folder-path")` to change it.
-
-setwd("C:/Users/FritscheU/Dropbox/RCourse_Text_Mining/Code")
-getwd() # check that the folder is correct
-
-# important option for text analysis
+# set options
 options(stringsAsFactors = F)
 
 # load packages
-library("tm")
-library("topicmodels")
+library(tm)
+library(topicmodels)
+library(wordcloud)
+library(tidyverse)
+library(quanteda)
+library(stm)
 
-textdata <- read.csv("data/sotu.csv", sep = ";", encoding = "UTF-8")
-english_stopwords <- readLines("resources/stopwords_en.txt", encoding = "UTF-8")
+textdata <- read.csv("code/data/sotu.csv", sep = ";", encoding = "UTF-8")
+english_stopwords <- readLines("code/resources/stopwords_en.txt", encoding = "UTF-8")
 
 # We rename "id" into "doc_id"
-
 names(textdata)[names(textdata) == "id"] <- "doc_id"
 textdata <- textdata[c(1,5,2,3,4)] # re-ordering
 
 # Create corpus object
-
 corpus <- Corpus(DataframeSource(textdata))
 
 # Preprocessing chain
-
-processedCorpus <- tm_map(corpus, removePunctuation, preserve_intra_word_dashes = TRUE)
-processedCorpus <- tm_map(processedCorpus, removeNumbers)
-processedCorpus <- tm_map(processedCorpus, content_transformer(tolower))
-processedCorpus <- tm_map(processedCorpus, removeWords, english_stopwords)
-processedCorpus <- tm_map(processedCorpus, stemDocument, language = "en")
-processedCorpus <- tm_map(processedCorpus, stripWhitespace)
+processedCorpus <- corpus %>% 
+  tm_map(removePunctuation, preserve_intra_word_dashes = TRUE) %>%
+  tm_map(removeNumbers) %>%
+  tm_map(content_transformer(tolower)) %>%
+  tm_map(removeWords, english_stopwords) %>%
+  tm_map(stemDocument, language = "en") %>%
+  tm_map(stripWhitespace)
 
 # compute document term matrix with terms >= minimumFrequency
-
 minimumFrequency <- 5
 DTM <- DocumentTermMatrix(processedCorpus, control = list(bounds = list(global = c(minimumFrequency, Inf))))
 
 # have a look at the number of documents and terms in the matrix
-
 dim(DTM)
 
-
+#-------------------------------------------------------------------------------
+# LDA model
 # number of topics
 # There is a large literature on evaluating and "fine-tuning" the number of K.
 # In case you want to try -- please uncomment the following lines (default):
@@ -71,51 +65,42 @@ dim(DTM)
 # 
 # FindTopicsNumber_plot(res_lda_tuning)
 
-# K <- 30
-K <- 20
+K <- 10
 
 # compute the LDA model, inference via 1000 iterations of Gibbs sampling
 #topicModel <- LDA(DTM, K, method="Gibbs", control=list(iter = 1000, verbose = 25, seed = 9161))
-#save(topicModel, file = "data/topicModel_sotu.RData")
-load("data/topicModel_sotu.RData")
+#save(topicModel, file = "code/data/topicModel_sotu.RData")
+load("code/data/topicModel_sotu.RData")
 
 # have a look a some of the results (posterior distributions)
 tmResult <- posterior(topicModel)
 
 # format of the resulting object
-
 attributes(tmResult)
 nTerms(DTM)              # lengthOfVocab
 
 # topics are probability distribtions over the entire vocabulary
-
 beta <- tmResult$terms   # get beta from results
 dim(beta)                # K distributions over nTerms(DTM) terms
 rowSums(beta)            # rows in beta sum to 1
 nDocs(DTM)               # size of collection
 
 # for every document we have a probaility distribution of its contained topics
-
 theta <- tmResult$topics 
 dim(theta)     
 rowSums(theta)[1:10]     # rows in theta sum to 1
 
 # show 10 most likely terms within the term probabilities beta of the inferred topics
-
 terms(topicModel, 10)
 
 # create top5 terms per topic
-
 top5termsPerTopic <- terms(topicModel, 5)
 
 # Use top 5 terms as as topic names
-
 topicNames <- apply(top5termsPerTopic, 2, paste, collapse=" ")
 
-# visualize topics as word cloud
-
-library("wordcloud")
-
+#-------------------------------------------------------------------------------
+# Visualize topics as word cloud
 #topicToViz <- 11 # change for your own topic of interest
 topicToViz <- grep('mexico', topicNames)[1] # Or select a topic by a term contained in its name
 
@@ -130,26 +115,25 @@ probabilities <- sort(tmResult$terms[topicToViz,], decreasing=TRUE)[1:40]
 mycolors <- brewer.pal(8, "Accent")
 
 # send the wordcloud to pdf (different to tutorial)
-fileName <- paste0("wordclouds/", topicToViz, ".pdf")
+fileName <- paste0("code/wordclouds/", topicToViz, ".pdf")
 pdf(fileName, width = 9, height = 7)
 wordcloud(words, probabilities, random.order = FALSE, color = mycolors)
 dev.off()
 
+#-------------------------------------------------------------------------------
 # contents of three sample documents:
 exampleIds <- c(1, 100, 200)
 # lapply(corpus[exampleIds], as.character)
 
 # visualize the topic distributions within the documents
 # load libraries for visualization
-library("reshape2")
-library("ggplot2")
 
 N <- length(exampleIds)
 
 # get topic proportions form example documents
 topicProportionExamples <- theta[exampleIds,]
 colnames(topicProportionExamples) <- topicNames
-vizDataFrame <- melt(cbind(data.frame(topicProportionExamples), document = factor(1:N)), variable.name = "topic", id.vars = "document")  
+vizDataFrame <- reshape2::melt(cbind(data.frame(topicProportionExamples), document = factor(1:N)), variable.name = "topic", id.vars = "document")  
 
 ggplot(data = vizDataFrame, aes(topic, value, fill = document), ylab = "proportion") + 
   geom_bar(stat="identity") +
@@ -157,18 +141,21 @@ ggplot(data = vizDataFrame, aes(topic, value, fill = document), ylab = "proporti
   coord_flip() +
   facet_wrap(~ document, ncol = N)
 
+#-------------------------------------------------------------------------------
 # Extensions
+# Priors
 # Now let us change the alpha prior to a lower value to see how this affects the topic distributions in the model.
 
 # see alpha from previous model
 attr(topicModel, "alpha") 
 
-topicModel2 <- LDA(DTM, K, method="Gibbs", control=list(iter = 500, verbose = 25, alpha = 0.2))
+topicModel2 <- LDA(DTM, K, method="Gibbs", control=list(iter = 2000, verbose = 25, alpha = 0.75))
 tmResult <- posterior(topicModel2)
 theta <- tmResult$topics
 beta <- tmResult$terms
 topicNames <- apply(terms(topicModel2, 5), 2, paste, collapse = " ")  #reset topicnames
 
+#-------------------------------------------------------------------------------
 # Topic ranking
 # What are the defining topics within a collection? There are different approaches to find out which can be used to bring the topics into a certain order.
 
@@ -189,6 +176,8 @@ for (i in 1:nDocs(DTM)) {
 }
 sort(countsOfPrimaryTopics, decreasing = TRUE)
 
+#-------------------------------------------------------------------------------
+# Filter by topic
 # In the following, we will select documents based on their topic content and display the resulting document quantity over time.
 topicToFilter <- 6  # you can set this manually ...
 # ... or have it selected by a term in the topic name (e.g. 'iraq')
@@ -213,27 +202,19 @@ topic_proportion_per_decade <- aggregate(theta, by = list(decade = textdata$deca
 colnames(topic_proportion_per_decade)[2:(K+1)] <- topicNames
 
 # reshape data frame
-vizDataFrame <- melt(topic_proportion_per_decade, id.vars = "decade")
+vizDataFrame <- reshape2::melt(topic_proportion_per_decade, id.vars = "decade")
 
 # plot topic proportions per deacade as bar plot
 ggplot(vizDataFrame, aes(x=decade, y=value, fill=variable)) + geom_bar(stat = "identity")
 
+#-------------------------------------------------------------------------------
 #####################################################
 # Exercises or homework
 # Estimate the model with 10 and 50 topics
 # Use stemming in the pre-processing and re-estimate
-
-
-######################################################
-# New section on STM based on quanteda and stm
-
-library("tidyverse")
-library("quanteda")
-library("stm")
-
 #####################################################
 
-dataset <- read_csv("data/MyData.csv")
+dataset <- read_csv("code/data/MyData.csv")
 myCorpus <- corpus(dataset$text)
 docvars(myCorpus, field = "decade") <- as.integer(dataset$decade)
 docvars(myCorpus, field = "president") <- as.character(dataset$president)
@@ -248,29 +229,27 @@ dfm <- dfm(myCorpus,
            remove_symbols = TRUE)
 
 # avoids complete preprocessing pipe... be aware that German language support is still in its infancy
-
 stmdfm <- convert(dfm, to = "stm", docvars = docvars(myCorpus))
 out <- prepDocuments(stmdfm$documents, stmdfm$vocab, stmdfm$meta, lower.thresh = 5)
 
 # there is a kSearch function here -- that takes a lot of time!
 
-# k <- seq(from = 10, to = 50, by = 5)
-# 
-# kresult <- searchK(out$documents, out$vocab, k, prevalence =~ s(decade), data = out$meta, init.type = "Spectral")
+k <- seq(from = 5, to = 20, by = 5)
+
+kresult <- searchK(out$documents, out$vocab, k, prevalence =~ s(decade), data = out$meta, init.type = "Spectral")
 # # 
 # # pdf("./kresult.pdf", width = 9, height = 7)
 # # plot(kresult)
 # # dev.off()
 # 
-# plot(kresult)
+plot(kresult)
 
-k <- 20
+k <- 10
 
-# stmFit <- stm(out$documents, out$vocab, K = k, prevalence =~ s(decade), max.em.its = 150, data = out$meta, init.type = "Spectral", seed = 300)
+stmFit <- stm(out$documents, out$vocab, K = k, prevalence =~ s(decade), max.em.its = 150, data = out$meta, init.type = "Spectral", seed = 300)
 # # 
 # save(stmFit, file = "data/stmFit_sotu.RData")
-
-load("data/stmFit_sotu.RData")
+#load("code/data/stmFit_sotu.RData")
 
 # summary plot
 plot(stmFit, 
@@ -300,7 +279,7 @@ j <- 1990
 # define x axis label
 xlab_str <- paste0("More Likely ", j,"                   Not Significant                    More Likely ",i)
 
-Result <-plot(
+Result <- plot(
   prep, covariate =
     "decade",
   model = stmFit,
@@ -315,23 +294,23 @@ Result <-plot(
 )
 
 cloud(stmFit, topic = 4, scale = c(2,.25))
-cloud(stmFit, topic = 14, scale = c(2,.25))
+cloud(stmFit, topic = 5, scale = c(2,.25))
 
 # summary(prep, topics=4)
 
 # another plot
 par(mfrow = c(1, 1), mar = c(4, 4, 2, 2))
-i <- c(4, 14)
+i <- c(4, 5)
 plot(
   prep,
   "decade",
   method = "continuous",
   topics = i,
-  main = "Topics 4 and 14 by Decade",
+  main = "Topics 4 and 5 by Decade",
   printlegend = T,
   ylab = "Exp. Topic Prob",
-  xlab = "decade",
-  ylim = c(-0.1, 0.70)
+  xlab = "decade"#,
+  #ylim = c(-0.1, 0.70)
 )
 
 # topic correlations
